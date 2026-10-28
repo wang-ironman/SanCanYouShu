@@ -2,6 +2,15 @@
 
 一个无需注册、离线可用的家庭菜谱与备菜 App。应用名称为「三餐有数」，包名 `cn.caidan.app`，当前版本 `0.1.3`，支持 Android 8.0 及以上。
 
+## 数据来源与致谢
+
+本项目内置的 **331 道基础菜谱整理自 [Anduin2017/HowToCook](https://github.com/Anduin2017/HowToCook)**。感谢原作者及项目贡献者提供菜谱、食材说明和烹饪步骤。
+
+- **使用版本：** 固定到上游提交 [`308cc8b7dab1da84b20e7fafdf836a715437f582`](https://github.com/Anduin2017/HowToCook/tree/308cc8b7dab1da84b20e7fafdf836a715437f582)。
+- **菜谱数据许可：** 上游该版本使用 [Unlicense](https://github.com/Anduin2017/HowToCook/blob/308cc8b7dab1da84b20e7fafdf836a715437f582/LICENSE)，本仓库及 APK 均保留[许可证原文](android/app/src/main/assets/HOWTOCOOK-LICENSE.txt)。
+- **来源记录：** [recipe-source.json](android/app/src/main/assets/recipe-source.json) 记录数据版本和导入范围；每道菜谱保留上游原文、文件路径及对应版本的来源链接。
+- **导入处理：** 本应用对菜谱进行结构化导入、份量换算与菜单搭配，解析及估算规则见[菜谱数据说明](docs/recipe-data.md)。
+
 ## 安装
 
 下载并安装 [CaiDan-0.1.3-debug.apk](https://github.com/wang-ironman/SanCanYouShu/raw/refs/heads/main/artifacts/CaiDan-0.1.3-debug.apk)（仓库文件：[artifacts/CaiDan-0.1.3-debug.apk](artifacts/CaiDan-0.1.3-debug.apk)，校验值：[SHA-256](artifacts/CaiDan-0.1.3-debug.apk.sha256)）。使用与首版相同的本地测试签名，可以覆盖安装并保留数据，尚未上架应用商店。
