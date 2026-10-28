@@ -1,0 +1,26 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'cn.caidan.app'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'cn.caidan.app'
+        minSdk 26
+        targetSdk 36
+        versionCode 4
+        versionName '0.1.3'
+        testInstrumentationRunner 'cn.caidan.app.AcceptanceRunner'
+    }
+    signingConfigs {
+        debug {
+            storeFile rootProject.file('../.tools/debug.keystore')
+            storePassword 'android'
+            keyPassword 'android'
+            keyAlias 'androiddebugkey'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

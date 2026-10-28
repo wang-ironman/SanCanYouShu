@@ -1,0 +1,9 @@
+.tools/
+.temp/
+android/.gradle/
+android/build/
+android/local.properties
+android/app/build/
+artifacts/*.apk
+artifacts/*.log
+__pycache__/

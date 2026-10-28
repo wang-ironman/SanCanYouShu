@@ -1,0 +1,13 @@
+{
+  "repository": "https://github.com/Anduin2017/HowToCook",
+  "revision": "308cc8b7dab1da84b20e7fafdf836a715437f582",
+  "license": "Unlicense",
+  "generatedBy": "scripts/import-recipes.py",
+  "recipeCount": 331,
+  "excludedFolders": [
+    "condiment",
+    "drink",
+    "semi-finished",
+    "template"
+  ]
+}
