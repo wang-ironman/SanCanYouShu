@@ -9,6 +9,8 @@ import java.util.regex.Pattern;
 public final class IngredientCatalog {
     private static final Pattern PAREN_NOTE = Pattern.compile("（[^）]*）|\\([^)]*\\)");
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
+    private static final Set<String> COOKING_WATER = words("水 清水 自来水 饮用水 纯净水 凉水 温水 热水 开水 沸水 冷水");
+    private static final Set<String> TABLE_OILS = words("普通花生油 花生油 普通菜籽油 菜籽油 普通玉米油 玉米油 普通大豆油 大豆油 食用油");
     private static final Set<String> SEASONINGS = words(
             "盐 食盐 精盐 白砂糖 白糖 糖 冰糖 红糖 生抽 老抽 酱油 醋 陈醋 香醋 米醋 料酒 黄酒 米酒\n" +
             "鱼露 蚝油 虾酱 鸡精 味精 豆瓣酱 番茄酱 蒜蓉酱 甜面酱 黄豆酱 甜辣酱\n" +
@@ -64,6 +66,40 @@ public final class IngredientCatalog {
         if (value.equals("金菇")) return "金针菇";
         if (value.equals("活虾") || value.equals("大虾") || value.equals("海虾") || value.equals("鲜虾")) return "虾";
         return value;
+    }
+
+    /** A looser name used only to group items bought together. */
+    public static String purchaseName(String name) {
+        String value = normalize(name);
+        if (value.isEmpty()) return value;
+        if (COOKING_WATER.contains(value)) return "";
+
+        String candidate = value;
+        for (String prefix : Arrays.asList("新鲜", "鲜")) {
+            if (candidate.startsWith(prefix) && candidate.length() > prefix.length()) {
+                candidate = candidate.substring(prefix.length());
+                break;
+            }
+        }
+        for (String suffix : Arrays.asList("切丝", "切末", "切片", "切块", "切丁", "丝", "末", "片", "块", "丁")) {
+            if (candidate.endsWith(suffix) && candidate.length() > suffix.length()) {
+                String base = candidate.substring(0, candidate.length() - suffix.length());
+                if (!category(base).equals("其他") && !category(base).equals("调味干货")) return purchaseName(base);
+                break;
+            }
+        }
+        if (TABLE_OILS.contains(candidate)) return "食用油";
+        if (candidate.equals("白糖") || candidate.equals("细砂糖") || candidate.equals("绵白糖")) return "白砂糖";
+        if (candidate.equals("精制盐")) return "盐";
+        if (candidate.equals("鸡胸") || candidate.equals("鸡胸肉") || candidate.equals("鸡胸丁")) return "鸡胸肉";
+        if (candidate.equals("黑胡椒粉")) return "黑胡椒";
+        if (candidate.equals("白胡椒粉")) return "白胡椒";
+        if (candidate.equals("独头蒜") || candidate.equals("蒜瓣")) return "蒜";
+        if (candidate.equals("嫩姜")) return "姜";
+        if (candidate.equals("青椒") || candidate.equals("青红椒") || candidate.equals("青红椒块") || candidate.equals("红椒")
+                || candidate.equals("黄椒") || candidate.equals("甜椒") || candidate.equals("青甜椒")
+                || candidate.equals("红甜椒") || candidate.equals("彩椒块")) return "彩椒";
+        return candidate;
     }
 
     public static String category(String name) {

@@ -1,17 +1,27 @@
 package cn.caidan.app;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.Instrumentation;
 import android.content.Context;
 import android.content.ContextWrapper;
+import android.content.Intent;
+import android.graphics.Bitmap;
 import android.content.SharedPreferences;
 import android.os.Bundle;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.EditText;
+import android.widget.ListAdapter;
+import android.widget.ListView;
+import android.widget.TextView;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
@@ -35,11 +45,14 @@ public final class AcceptanceRunner extends Instrumentation {
     private final StringBuilder log = new StringBuilder();
     private int assertions;
     private boolean shoppingRegression;
+    private boolean searchUi;
 
     @Override public void onCreate(Bundle arguments) {
         super.onCreate(arguments);
         Object route = arguments == null ? null : arguments.get("shoppingRegression");
         shoppingRegression = Boolean.TRUE.equals(route) || "true".equalsIgnoreCase(String.valueOf(route));
+        Object uiRoute = arguments == null ? null : arguments.get("searchUi");
+        searchUi = Boolean.TRUE.equals(uiRoute) || "true".equalsIgnoreCase(String.valueOf(uiRoute));
         start();
     }
 
@@ -48,15 +61,19 @@ public final class AcceptanceRunner extends Instrumentation {
         int code = Activity.RESULT_OK;
         Context testContext = null;
         try {
-            testContext = new AcceptanceContext(getTargetContext());
-            if (shoppingRegression) {
+            if (searchUi) {
+                testSearchUi();
+            } else if (shoppingRegression) {
                 testShoppingRegression();
             } else {
+                testContext = new AcceptanceContext(getTargetContext());
                 testRecipes(testContext);
                 testPlanner(testContext);
+                testReplacementSearch();
                 testShopping();
                 testShoppingRegression();
                 testAiSlotValidation(testContext);
+                testGeneratedRecipe();
                 testStore(testContext);
                 testPantry(testContext);
                 testShoppingLifecycle(testContext);
@@ -118,6 +135,205 @@ public final class AcceptanceRunner extends Instrumentation {
         JSONObject filtered = Planner.generate(Arrays.asList(chicken, peanuts), avoidPeanuts, new Random(4));
         check("rule_chicken".equals(filtered.getJSONArray("slots").getJSONObject(0).getJSONArray("recipeIds").getString(0)),
                 "rule planner honors a usable exclusion while retaining valid dishes");
+    }
+
+    private void testReplacementSearch() throws Exception {
+        Recipe ingredientFirst = recipe("replacement_ingredient_first", "家常鸡肉", "荤菜", 2,
+                ingredient("番茄", 1, "个", "", "蔬果"));
+        Recipe titleAndIngredient = recipe("replacement_title_both", "番茄鸡蛋", "荤菜", 2,
+                ingredient("番茄", 1, "个", "", "蔬果"));
+        Recipe titleSecond = recipe("replacement_title_second", "清炒番茄", "素菜", 2,
+                ingredient("盐", 1, "克", "", "调味干货"));
+        Recipe ingredientSecond = recipe("replacement_ingredient_second", "蒜香菜", "素菜", 2,
+                ingredient("番茄酱", 1, "勺", "", "调味干货"));
+        Recipe latinTitle = recipe("replacement_latin_title", "Tomato Soup", "汤羹", 2,
+                ingredient("盐", 1, "克", "", "调味干货"));
+        Recipe latinIngredient = recipe("replacement_latin_ingredient", "Garlic Rice", "主食", 2,
+                ingredient("garlic", 1, "瓣", "", "蔬果"));
+        Recipe rawAndSteps = recipe("replacement_raw_steps", "普通菜", "素菜", 2,
+                ingredient("白菜", 1, "颗", "", "蔬果"));
+        rawAndSteps.json.put("raw", "legacyphrase");
+        rawAndSteps.json.put("steps", new JSONArray().put("stepsphrase"));
+        rawAndSteps = new Recipe(rawAndSteps.json);
+
+        List<Recipe> candidates = new ArrayList<>(Arrays.asList(ingredientFirst, titleAndIngredient,
+                titleSecond, ingredientSecond, latinTitle, latinIngredient, rawAndSteps));
+        List<Recipe> originalOrder = new ArrayList<>(candidates);
+        List<Recipe> matches = Planner.searchRecipes(candidates, "番茄");
+        check(matches.equals(Arrays.asList(titleAndIngredient, titleSecond, ingredientFirst, ingredientSecond)),
+                "replacement search puts all title hits first and preserves input order within both groups");
+        check(Collections.frequency(matches, titleAndIngredient) == 1 && candidates.equals(originalOrder),
+                "a title-and-ingredient match appears once and the candidate list is unchanged");
+        check(Planner.searchRecipes(candidates, " legacyphrase ").isEmpty()
+                        && Planner.searchRecipes(candidates, "stepsphrase").isEmpty(),
+                "replacement search ignores recipe raw text and directions");
+        List<Recipe> reset = Planner.searchRecipes(candidates, " \t ");
+        check(reset.equals(originalOrder) && reset != candidates,
+                "blank replacement query returns a separate copy in original order");
+        reset.add(recipe("replacement_extra", "额外", "素菜", 2, ingredient("盐", 1, "克", "", "调味干货")));
+        check(candidates.size() == originalOrder.size(), "changing a blank-query result does not change the input list");
+        check(Planner.searchRecipes(candidates, " TOMATO ").equals(Collections.singletonList(latinTitle))
+                        && Planner.searchRecipes(candidates, " GARLIC ").equals(Collections.singletonList(latinIngredient)),
+                "replacement search trims queries and ignores Latin letter case in titles and ingredients");
+        check(Planner.searchRecipes(candidates, "no-such-recipe").isEmpty(),
+                "replacement search returns no rows when nothing matches");
+    }
+
+    private void testSearchUi() throws Exception {
+        Context target = getTargetContext();
+        Activity activity = startActivitySync(new Intent(target, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP));
+        waitForIdleSync();
+        check(activity instanceof MainActivity, "UI search route launched the app activity");
+
+        onUi(() -> {
+            View home = activity.findViewById(MainActivity.NAV_HOME);
+            if (home == null) throw new IllegalStateException("首页导航不存在");
+            home.performClick();
+        });
+        waitForIdleSync();
+        AtomicReference<View> replace = new AtomicReference<>();
+        onUi(() -> replace.set(findText(activity.getWindow().getDecorView(), "换菜")));
+        check(replace.get() != null, "seeded current menu exposes a replace control");
+        onUi(() -> replace.get().performClick());
+        waitForIdleSync();
+
+        AtomicReference<EditText> queryRef = new AtomicReference<>();
+        AtomicReference<ListView> listRef = new AtomicReference<>();
+        onUi(() -> {
+            try {
+                java.lang.reflect.Field field = MainActivity.class.getDeclaredField("menuDialog");
+                field.setAccessible(true);
+                AlertDialog dialog = (AlertDialog) field.get(activity);
+                if (dialog == null || !dialog.isShowing()) throw new IllegalStateException("换菜窗口未显示");
+                View decor = dialog.getWindow().getDecorView();
+                queryRef.set((EditText) findView(decor, v -> v instanceof EditText));
+                listRef.set((ListView) findView(decor, v -> v instanceof ListView));
+                if (queryRef.get() == null || listRef.get() == null) throw new IllegalStateException("换菜搜索框或列表不存在");
+                queryRef.get().setText("萝卜");
+            } catch (Throwable error) { throw new IllegalStateException("读取换菜窗口失败", error); }
+        });
+        waitForIdleSync();
+
+        AtomicReference<Integer> radishIndex = new AtomicReference<>(-1);
+        AtomicReference<String> radishRow = new AtomicReference<>("");
+        onUi(() -> {
+            ListAdapter adapter = listRef.get().getAdapter();
+            if (adapter == null) throw new IllegalStateException("换菜结果列表为空");
+            for (int i = 0; i < adapter.getCount(); i++) {
+                String row = String.valueOf(adapter.getItem(i));
+                if (row.contains("凉拌萝卜丝")) { radishIndex.set(i); radishRow.set(row); break; }
+            }
+        });
+        check(radishIndex.get() >= 0, "replace search finds the seeded radish recipe despite the coriander exclusion");
+        check(radishRow.get().contains("忌口提醒") && radishRow.get().contains("香菜"),
+                "replace result shows the disliked ingredient warning on the matching row");
+        saveUiScreenshot(target, "v16-ui-warning-search.png");
+
+        onUi(() -> {
+            ListView list = listRef.get(); int index = radishIndex.get();
+            ListAdapter adapter = list.getAdapter();
+            int childIndex = index - list.getFirstVisiblePosition();
+            View row = childIndex >= 0 && childIndex < list.getChildCount()
+                    ? list.getChildAt(childIndex) : adapter.getView(index, null, list);
+            list.performItemClick(row, index, adapter.getItemId(index));
+        });
+        waitForIdleSync();
+
+        JSONObject plan = new Store(target).plan;
+        check(planContainsRecipe(plan, "custom_v16_radish"),
+                "selecting the warned search result saves its recipe into the active menu");
+        AtomicReference<String> homeText = new AtomicReference<>("");
+        onUi(() -> homeText.set(String.join("\n", visibleTexts(activity.getWindow().getDecorView()))));
+        check(homeText.get().contains("忌口提醒") && homeText.get().contains("香菜"),
+                "home menu displays the disliked ingredient reminder after replacement");
+        saveUiScreenshot(target, "v16-ui-warning-home.png");
+
+        onUi(() -> {
+            View recipes = activity.findViewById(MainActivity.NAV_RECIPES);
+            if (recipes == null) throw new IllegalStateException("菜谱导航不存在");
+            recipes.performClick();
+        });
+        waitForIdleSync();
+        onUi(() -> {
+            EditText search = (EditText) findView(activity.getWindow().getDecorView(),
+                    v -> v instanceof EditText && "搜索菜谱".equals(v.getContentDescription()));
+            if (search == null) throw new IllegalStateException("菜谱搜索框不存在");
+            search.setText("kwegg");
+        });
+        waitForIdleSync();
+        AtomicReference<List<String>> recipeTextsRef = new AtomicReference<>();
+        onUi(() -> recipeTextsRef.set(visibleTexts(activity.getWindow().getDecorView())));
+        List<String> recipeTexts = recipeTextsRef.get();
+        List<String> titleHits = Arrays.asList("kwegg 有库存菜", "kwegg 无库存菜", "kwegg 名称食材都命中");
+        int previous = -1;
+        for (String title : titleHits) {
+            int index = recipeTexts.indexOf(title);
+            check(index >= 0 && index > previous, "recipe library displays title hit in candidate order: " + title);
+            previous = index;
+        }
+        int ingredientOnly = recipeTexts.indexOf("仅食材命中的家常菜");
+        check(ingredientOnly > previous, "all recipe title hits precede the pantry-prioritized ingredient-only match");
+    }
+
+    private void onUi(Runnable action) {
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        runOnMainSync(() -> {
+            try { action.run(); } catch (Throwable error) { failure.set(error); }
+        });
+        if (failure.get() != null) throw new IllegalStateException("UI action failed", failure.get());
+    }
+
+    private static View findText(View root, String text) {
+        return findView(root, v -> v instanceof TextView && !(v instanceof EditText)
+                && ((TextView) v).getText().toString().trim().equals(text));
+    }
+
+    private static View findView(View root, java.util.function.Predicate<View> matches) {
+        if (matches.test(root)) return root;
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                View found = findView(group.getChildAt(i), matches);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    private static List<String> visibleTexts(View root) {
+        List<String> result = new ArrayList<>();
+        collectVisibleTexts(root, result);
+        return result;
+    }
+
+    private static void collectVisibleTexts(View root, List<String> result) {
+        if (root instanceof TextView && !(root instanceof EditText)) {
+            String text = ((TextView) root).getText().toString().trim();
+            if (!text.isEmpty()) result.add(text);
+        }
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++) collectVisibleTexts(group.getChildAt(i), result);
+        }
+    }
+
+    private static boolean planContainsRecipe(JSONObject plan, String recipeId) throws Exception {
+        if (plan == null) return false;
+        JSONArray slots = plan.getJSONArray("slots");
+        for (int i = 0; i < slots.length(); i++) {
+            JSONArray ids = slots.getJSONObject(i).getJSONArray("recipeIds");
+            for (int j = 0; j < ids.length(); j++) if (ids.getString(j).equals(recipeId)) return true;
+        }
+        return false;
+    }
+
+    private void saveUiScreenshot(Context target, String filename) throws Exception {
+        Bitmap screenshot = getUiAutomation().takeScreenshot();
+        if (screenshot == null) throw new IllegalStateException("无法获取界面截图");
+        try (FileOutputStream output = new FileOutputStream(new File(target.getFilesDir(), filename))) {
+            if (!screenshot.compress(Bitmap.CompressFormat.PNG, 100, output)) throw new IllegalStateException("界面截图保存失败");
+        } finally { screenshot.recycle(); }
     }
 
     private void assertPlan(JSONObject plan, int slotsCount, int days, int people, Context context) throws Exception {
@@ -212,6 +428,62 @@ public final class AcceptanceRunner extends Instrumentation {
                         && "调味干货".equals(IngredientCatalog.category("鱼露"))
                         && "调味干货".equals(IngredientCatalog.category("蚝油")),
                 "fish and shrimp are protein; fish sauce and oyster sauce are seasonings");
+
+        Recipe cutsDish = recipe("regression_purchase_names", "采购名称归并", "荤菜", 2,
+                ingredient("青椒", 100, "g", "", "蔬果"), ingredient("红椒", 2, "个", "", "蔬果"),
+                ingredient("大蒜", 2, "瓣", "", "蔬果"), ingredient("蒜瓣", 1, "瓣", "", "蔬果"),
+                ingredient("生姜", 10, "g", "", "蔬果"), ingredient("姜片", 2, "片", "", "蔬果"),
+                ingredient("牛肉切块", 200, "g", "", "肉蛋水产"), ingredient("清水", 500, "ml", "", "其他"),
+                ingredient("猪肉", 100, "g", "", "肉蛋水产"), ingredient("鲈鱼", 1, "条", "", "肉蛋水产"),
+                ingredient("鱼露", 1, "勺", "", "调味干货"), ingredient("生抽", 1, "勺", "", "调味干货"),
+                ingredient("老抽", 1, "勺", "", "调味干货"));
+        JSONObject cutsSlot = new JSONObject().put("day", 0).put("meal", "晚餐")
+                .put("recipeIds", new JSONArray().put(cutsDish.id));
+        JSONObject cutsPlan = Planner.create(options, new JSONArray().put(cutsSlot), "purchase names");
+        List<Planner.ShoppingItem> cuts = Planner.shopping(cutsPlan, map(cutsDish), -1);
+        Planner.ShoppingItem peppers = find(cuts, "彩椒");
+        check(peppers != null && peppers.sourceNames.size() == 2 && peppers.sourceKeys.size() == 2
+                        && peppers.quantities.get("克") == 100.0 && peppers.quantities.get("个") == 2.0,
+                "shopping purchase names combine green/red bell peppers and retain each amount/source");
+        Planner.ShoppingItem garlic = find(cuts, "蒜"), ginger = find(cuts, "姜");
+        check(garlic != null && garlic.sourceNames.size() == 2 && ginger != null && ginger.sourceNames.size() == 2,
+                "frequent recipe garlic and ginger aliases remain combined into single shopping items");
+        check(find(cuts, "牛肉") != null && find(cuts, "猪肉") != null && find(cuts, "鲈鱼") != null
+                        && find(cuts, "鱼露") != null && find(cuts, "生抽") != null && find(cuts, "老抽") != null
+                        && find(cuts, "清水") == null,
+                "coarse shopping merge keeps distinct meats, fish, sauces and soy sauces while omitting cooking water");
+
+        Set<String> pepperOriginals = new LinkedHashSet<>(Arrays.asList("青椒", "红椒"));
+        JSONObject pepperRules = Planner.parseIngredientRules(
+                rulesResponse("青椒", "彩椒", "蔬果", "红椒", "彩椒", "蔬果"), pepperOriginals);
+        cuts = Planner.shopping(cutsPlan, map(cutsDish), -1, pepperRules);
+        peppers = find(cuts, "彩椒");
+        check(peppers != null && peppers.sourceNames.size() == 2 && peppers.quantities.get("克") == 100.0
+                        && peppers.quantities.get("个") == 2.0,
+                "confirmed AI purchase-name rules merge aliases again without changing quantities");
+        for (String cut : Arrays.asList("青椒丝", "鲜虾", "鸡胸", "鸡胸肉", "鸡胸肉丁", "普通花生油",
+                "菜籽油", "玉米油", "大豆油", "白糖", "细砂糖", "绵白糖", "黑胡椒粉", "白胡椒粉", "精制盐")) {
+            String purchaseName = IngredientCatalog.purchaseName(cut);
+            check(purchaseName.equals(IngredientCatalog.purchaseName(purchaseName)),
+                    "purchase name is idempotent for " + cut + " -> " + purchaseName);
+        }
+        check("彩椒".equals(IngredientCatalog.purchaseName("青椒丝"))
+                        && "虾".equals(IngredientCatalog.purchaseName("鲜虾"))
+                        && "鸡胸肉".equals(IngredientCatalog.purchaseName("鸡胸肉丁")),
+                "cut peppers and chicken breast resolve to their stable purchase names");
+        check(Arrays.asList("普通花生油", "菜籽油", "玉米油", "大豆油", "食用油").stream()
+                        .allMatch(oil -> "食用油".equals(IngredientCatalog.purchaseName(oil)))
+                        && "芝麻油".equals(IngredientCatalog.purchaseName("芝麻油"))
+                        && "辣椒油".equals(IngredientCatalog.purchaseName("辣椒油"))
+                        && "黄油".equals(IngredientCatalog.purchaseName("黄油")),
+                "ordinary cooking oils merge while sesame oil, chili oil and butter stay distinct");
+        check("白砂糖".equals(IngredientCatalog.purchaseName("绵白糖"))
+                        && "黑胡椒".equals(IngredientCatalog.purchaseName("黑胡椒粉"))
+                        && "白胡椒".equals(IngredientCatalog.purchaseName("白胡椒粉"))
+                        && "胡椒粉".equals(IngredientCatalog.purchaseName("胡椒粉"))
+                        && "盐".equals(IngredientCatalog.purchaseName("精制盐"))
+                        && "矿泉水".equals(IngredientCatalog.purchaseName("矿泉水")),
+                "sugar, pepper and salt variants merge without dropping bottled water");
     }
 
     private void testShoppingLifecycle(Context context) throws Exception {
@@ -276,7 +548,7 @@ public final class AcceptanceRunner extends Instrumentation {
                 ingredient("青椒", 100, "g", "", "蔬果"), ingredient("盐", 3, "g", "", "调味干货"));
         store.saveRecipe(changedTomato);
         store = new Store(context);
-        check(find(store.shoppingItems(0), "青椒") != null && find(store.shoppingItems(0), "盐") != null
+        check(find(store.shoppingItems(0), "彩椒") != null && find(store.shoppingItems(0), "盐") != null
                 && store.shoppingItems(1).isEmpty(), "recipe changes reveal new source demand and keep other completed demands done");
         store.selectShopping(0, true);
         check(store.completeShopping(0) == 2 && store.shoppingItems(0).isEmpty(), "select all completes every remaining row");
@@ -284,12 +556,32 @@ public final class AcceptanceRunner extends Instrumentation {
         store = new Store(context);
         check(store.checked.isEmpty() && store.shoppingItems(0).size() == 2 && store.shoppingItems(1).size() == 1,
                 "reset restores the whole menu and clears selection/completion");
-        store.check(find(store.shoppingItems(0), "青椒").key(), true);
+        store.check(find(store.shoppingItems(0), "彩椒").key(), true);
         store.completeShopping(0);
         store.savePlan(Planner.create(options, slots, "new menu"));
         store = new Store(context);
         check(store.plan.optJSONArray("completedShopping") == null && store.shoppingItems(0).size() == 2,
                 "saving a new plan clears completion and restores full shopping list");
+        store.saveStockedSeasonings(Collections.singleton("食盐"));
+        store.savePlan(Planner.create(options, slots, "new menu with stocked seasoning"));
+        store = new Store(context);
+        check(store.stockedSeasonings.contains("盐") && find(store.shoppingItems(0), "盐") == null
+                        && find(store.shoppingItems(0), "彩椒") != null,
+                "saved stocked seasonings survive Store recreation and hide only matching purchase items");
+        store.check(find(store.shoppingItems(0), "彩椒").key(), true);
+        check(store.completeShopping(0) == 1, "other shopping items can be completed while seasoning stock is applied");
+        store = new Store(context);
+        check(find(store.shoppingItems(0), "彩椒") == null && find(store.shoppingItems(0), "盐") == null,
+                "completion of another item does not revive stocked or completed demand");
+        store.resetShopping();
+        store = new Store(context);
+        check(store.stockedSeasonings.contains("盐") && find(store.shoppingItems(0), "彩椒") != null
+                        && find(store.shoppingItems(0), "盐") == null,
+                "rebuilding the shopping list retains stocked seasoning preferences");
+        store.saveStockedSeasonings(Collections.emptySet());
+        store = new Store(context);
+        check(store.stockedSeasonings.isEmpty() && find(store.shoppingItems(0), "盐") != null,
+                "removing an in-stock seasoning restores its outstanding shopping demand");
     }
 
     private void testMenuExpiry(Context context) throws Exception {
@@ -384,6 +676,30 @@ public final class AcceptanceRunner extends Instrumentation {
         check(!all.isEmpty(), "asset available for AI checks");
     }
 
+    private void testGeneratedRecipe() throws Exception {
+        JSONObject response = new JSONObject().put("id", "remote_id").put("custom", false).put("name", "番茄鸡蛋面")
+                .put("category", "主食").put("servings", 2).put("minutes", 15)
+                .put("ingredients", new JSONArray().put(ingredient("番茄", 2, "个", "", "蔬果")))
+                .put("steps", new JSONArray().put("洗净番茄切块，煮面至熟后调味"));
+        JSONObject draft = MainActivity.parseGeneratedRecipe("```json\n" + response + "\n```");
+        Recipe recipe = new Recipe(draft);
+        check(recipe.custom && recipe.id.startsWith("custom_") && !recipe.id.equals("remote_id")
+                        && recipe.name.equals("番茄鸡蛋面") && recipe.servings == 2 && recipe.ingredients.size() == 1
+                        && draft.getString("source").contains("AI"),
+                "AI recipe becomes a locally identified editable draft with ingredients and steps");
+        expectFailure(() -> MainActivity.parseGeneratedRecipe("{\"error\":\"not a recipe\"}"), "AI recipe errors do not produce drafts");
+        JSONObject invalid = new JSONObject(response.toString()).put("ingredients", new JSONArray());
+        expectFailure(() -> MainActivity.parseGeneratedRecipe(invalid.toString()), "AI recipe requires ingredients");
+        JSONObject noSteps = new JSONObject(response.toString()).put("steps", new JSONArray());
+        expectFailure(() -> MainActivity.parseGeneratedRecipe(noSteps.toString()), "AI recipe requires steps");
+        JSONObject noPeople = new JSONObject(response.toString()).put("servings", 0);
+        expectFailure(() -> MainActivity.parseGeneratedRecipe(noPeople.toString()), "AI recipe rejects invalid serving count");
+        JSONObject noCategory = new JSONObject(response.toString()).put("category", "未知分类");
+        expectFailure(() -> MainActivity.parseGeneratedRecipe(noCategory.toString()), "AI recipe rejects invalid category");
+        JSONObject noTime = new JSONObject(response.toString()).put("minutes", 0);
+        expectFailure(() -> MainActivity.parseGeneratedRecipe(noTime.toString()), "AI recipe rejects invalid cooking time");
+    }
+
     private void testStore(Context context) throws Exception {
         Store store = new Store(context);
         Recipe custom = recipe("custom_acceptance", "自建测试菜", "早餐", 2,
@@ -401,6 +717,24 @@ public final class AcceptanceRunner extends Instrumentation {
         Store restored = new Store(context);
         check(restored.plan != null && restored.plan.getJSONArray("slots").length() == 1, "plan persists");
         check(restored.favorites.contains(favoriteId) && restored.checked.contains("acceptance_check"), "favorite and shopping check persist");
+        check(Planner.searchRecipes(restored.recipes, "编辑后的测试菜").stream().anyMatch(r -> r.id.equals(custom.id))
+                        && Planner.searchRecipes(restored.recipes, "鸡蛋").stream().anyMatch(r -> r.id.equals(custom.id)),
+                "persisted custom recipe can be found by title or ingredient through shared recipe search");
+        Recipe corianderSalad = recipe("custom_coriander_radish", "凉拌萝卜丝", "素菜", 2,
+                ingredient("萝卜", 200, "g", "", "蔬果"), ingredient("香菜", 10, "g", "", "蔬果"));
+        restored.saveRecipe(corianderSalad);
+        Store recipesRestored = new Store(context);
+        Recipe loadedSalad = Planner.searchRecipes(recipesRestored.recipes, "萝卜").stream()
+                .filter(r -> r.id.equals(corianderSalad.id)).findFirst().orElse(null);
+        check(loadedSalad != null, "manual recipe search finds the persisted radish dish despite a disliked ingredient");
+        if (loadedSalad != null) {
+            check(loadedSalad.excludedKeywords(new String[]{"香菜", " 香菜 ", "", "花生"})
+                            .equals(Collections.singletonList("香菜")) && loadedSalad.excludes(new String[]{"香菜"}),
+                    "excluded keyword warnings are trimmed and deduplicated while exclusion remains available");
+            Planner.Options automatic = options(1, 2, 1); automatic.exclude = "香菜";
+            check(Planner.eligible(Collections.singletonList(loadedSalad), automatic).isEmpty(),
+                    "automatic menu candidates still exclude the radish dish with disliked coriander");
+        }
         restored.savePlan(new JSONObject().put("slots", new JSONArray()));
         restored.deleteRecipe(restored.byId.get(custom.id));
         check(!new Store(context).byId.containsKey(custom.id), "unreferenced custom recipe deleted");

@@ -22,7 +22,7 @@ public final class Store {
     private final SharedPreferences prefs;
     public final List<Recipe> recipes = new ArrayList<>();
     public final Map<String, Recipe> byId = new LinkedHashMap<>();
-    public Set<String> favorites, checked, pantry;
+    public Set<String> favorites, checked, pantry, stockedSeasonings;
     public JSONObject plan;
     public JSONObject ingredientRules;
 
@@ -32,6 +32,7 @@ public final class Store {
         favorites = new HashSet<>(prefs.getStringSet("favorites", new HashSet<>()));
         checked = new HashSet<>(prefs.getStringSet("checked", new HashSet<>()));
         pantry = new java.util.TreeSet<>(prefs.getStringSet("pantry", new HashSet<>()));
+        stockedSeasonings = new java.util.TreeSet<>(prefs.getStringSet("stockedSeasonings", new HashSet<>()));
         loadRecipes();
         String saved = read("plan.json");
         if (!saved.trim().isEmpty()) plan = new JSONObject(saved);
@@ -145,8 +146,36 @@ public final class Store {
         pantry = normalized;
     }
 
+    public void saveStockedSeasonings(Set<String> names) {
+        Set<String> normalized = new java.util.TreeSet<>();
+        for (String name : names) {
+            String value = IngredientCatalog.purchaseName(name);
+            if (!value.isEmpty()) normalized.add(value);
+        }
+        if (!prefs.edit().putStringSet("stockedSeasonings", normalized).commit()) {
+            throw new IllegalStateException("已有调味料保存失败，请检查设备存储空间");
+        }
+        stockedSeasonings = normalized;
+        checked.clear();
+        prefs.edit().putStringSet("checked", checked).commit();
+    }
+
     public List<Planner.ShoppingItem> shoppingItems(int day) throws Exception {
-        return plan == null ? new ArrayList<>() : Planner.shopping(plan, byId, day, ingredientRules);
+        return shoppingItems(day, ingredientRules);
+    }
+    public List<Planner.ShoppingItem> shoppingItems(int day, JSONObject rules) throws Exception {
+        if (plan == null) return new ArrayList<>();
+        List<Planner.ShoppingItem> items = Planner.shopping(plan, byId, day, rules);
+        if (stockedSeasonings.isEmpty()) return items;
+        List<Planner.ShoppingItem> result = new ArrayList<>();
+        for (Planner.ShoppingItem item : items) {
+            boolean stocked = stockedSeasonings.contains(IngredientCatalog.purchaseName(item.name));
+            if (!stocked) for (String original : item.sourceNames) {
+                if (stockedSeasonings.contains(IngredientCatalog.purchaseName(original))) { stocked = true; break; }
+            }
+            if (!stocked) result.add(item);
+        }
+        return result;
     }
     public void selectShopping(int day, boolean selected) throws Exception {
         for (Planner.ShoppingItem item : shoppingItems(day)) {

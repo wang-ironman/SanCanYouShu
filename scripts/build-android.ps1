@@ -26,8 +26,8 @@ try {
     if ($TestApk) { $taskArgs += 'assembleDebugAndroidTest' }
     & $taskGradle @taskArgs
     if ($LASTEXITCODE -ne 0) { throw 'Android 构建失败' }
-    Copy-Item -LiteralPath (Join-Path $taskRoot 'android/app/build/outputs/apk/debug/app-debug.apk') -Destination (Join-Path $taskRoot 'artifacts/CaiDan-0.1.3-debug.apk') -Force
-    Write-Output '已生成 artifacts/CaiDan-0.1.3-debug.apk'
+    Copy-Item -LiteralPath (Join-Path $taskRoot 'android/app/build/outputs/apk/debug/app-debug.apk') -Destination (Join-Path $taskRoot 'artifacts/CaiDan-0.1.6-debug.apk') -Force
+    Write-Output '已生成 artifacts/CaiDan-0.1.6-debug.apk'
 } finally {
     $env:JAVA_HOME = $taskOldJava
     $env:ANDROID_HOME = $taskOldSdk

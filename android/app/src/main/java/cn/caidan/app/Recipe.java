@@ -41,9 +41,17 @@ public final class Recipe {
     }
 
     public boolean excludes(String[] words) {
+        return !excludedKeywords(words).isEmpty();
+    }
+
+    public List<String> excludedKeywords(String[] words) {
         String text = name + " " + json.optString("raw", "") + " " + json.optJSONArray("ingredients") + " " + json.optJSONArray("steps");
-        for (String word : words) if (!word.trim().isEmpty() && text.contains(word.trim())) return true;
-        return false;
+        List<String> matches = new ArrayList<>();
+        for (String word : words) {
+            String keyword = word.trim();
+            if (!keyword.isEmpty() && text.contains(keyword) && !matches.contains(keyword)) matches.add(keyword);
+        }
+        return matches;
     }
 
     public static String number(double value) {

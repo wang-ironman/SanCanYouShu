@@ -1,0 +1,4 @@
+INSTRUMENTATION_RESULT: assertions=3
+INSTRUMENTATION_RESULT: result=FAIL
+INSTRUMENTATION_RESULT: stream=FAIL after 3 assertions: AssertionError: replace search finds the seeded radish recipe despite the coriander exclusion
+INSTRUMENTATION_CODE: 1

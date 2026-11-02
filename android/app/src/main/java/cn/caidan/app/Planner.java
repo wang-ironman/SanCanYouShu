@@ -72,6 +72,18 @@ public final class Planner {
         return result;
     }
 
+    public static List<Recipe> searchRecipes(List<Recipe> candidates, String query) {
+        String keyword = query.trim().toLowerCase(java.util.Locale.ROOT);
+        if (keyword.isEmpty()) return new ArrayList<>(candidates);
+        List<Recipe> names = new ArrayList<>(), ingredients = new ArrayList<>();
+        for (Recipe recipe : candidates) {
+            if (recipe.name.toLowerCase(java.util.Locale.ROOT).contains(keyword)) names.add(recipe);
+            else if (recipe.matches(keyword)) ingredients.add(recipe);
+        }
+        names.addAll(ingredients);
+        return names;
+    }
+
     public static JSONObject generate(List<Recipe> recipes, Options options, Random random) throws JSONException {
         options.validate();
         List<Recipe> available = eligible(recipes, options);
@@ -193,7 +205,8 @@ public final class Planner {
                             .toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
                     if (completed.contains(sourceKey)) continue;
                     JSONObject rule = rules.optJSONObject(ingredient.name);
-                    String name = rule == null ? normalizeName(ingredient.name) : normalizeName(rule.getString("name"));
+                    String name = IngredientCatalog.purchaseName(rule == null ? ingredient.name : rule.getString("name"));
+                    if (name.isEmpty()) continue;
                     String category = rule == null ? IngredientCatalog.category(name) : rule.getString("category");
                     String unit = normalizeUnit(ingredient.unit);
                     double amount = ingredient.amount * scale * unitFactor(ingredient.unit);
@@ -232,11 +245,12 @@ public final class Planner {
             JSONObject item = items.getJSONObject(i);
             String original = item.getString("original");
             String name = normalizeName(item.getString("name"));
+            String purchaseName = IngredientCatalog.purchaseName(name);
             String category = item.getString("category");
-            if (!originals.contains(original) || result.has(original) || name.isEmpty() || name.length() > 60
+            if (!originals.contains(original) || result.has(original) || name.isEmpty() || purchaseName.isEmpty() || name.length() > 60
                     || !SHOPPING_CATEGORIES.contains(category)) throw new JSONException("食材整理结果无效");
-            if (categories.containsKey(name) && !categories.get(name).equals(category)) throw new JSONException("同种食材分类不一致");
-            categories.put(name, category);
+            if (categories.containsKey(purchaseName) && !categories.get(purchaseName).equals(category)) throw new JSONException("同种食材分类不一致");
+            categories.put(purchaseName, category);
             result.put(original, new JSONObject().put("name", name).put("category", category));
         }
         if (result.length() != originals.size()) throw new JSONException("食材整理结果不完整");

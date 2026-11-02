@@ -1,0 +1,5 @@
+v0.1.4: custom Other-category search reproduced with zero results.
+v0.1.5: custom Other-category and Breakfast-category recipes found in lunch replacement search.
+v0.1.5: four ordered results = title with pantry, title without pantry, title-and-ingredient, ingredient-only with more pantry matches.
+v0.1.5: unknown keyword returns zero rows.
+v0.1.5: choosing custom Other-category recipe persists its ID in plan.json.
